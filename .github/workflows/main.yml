@@ -1,0 +1,57 @@
+
+name: Build Windows Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Download project
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python packages
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Download FFmpeg
+        shell: pwsh
+        run: |
+          Invoke-WebRequest "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-temp
+          $ffmpeg = Get-ChildItem ffmpeg-temp -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          $ffprobe = Get-ChildItem ffmpeg-temp -Recurse -Filter ffprobe.exe | Select-Object -First 1
+          if (!$ffmpeg -or !$ffprobe) { throw "FFmpeg files not found" }
+          "FFMPEG_PATH=$($ffmpeg.FullName)" >> $env:GITHUB_ENV
+          "FFPROBE_PATH=$($ffprobe.FullName)" >> $env:GITHUB_ENV
+
+      - name: Build application
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --windowed --onedir --name ShortsAIStudio --collect-all PySide6 --collect-all faster_whisper --collect-all av --add-binary "$env:FFMPEG_PATH;." --add-binary "$env:FFPROBE_PATH;." main.py
+
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+
+      - name: Create installer
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\ShortsAIStudio.iss
+          if ($LASTEXITCODE -ne 0) { throw "Installer creation failed" }
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Shorts-AI-Studio-Windows-Setup
+          path: Output/Shorts_AI_Studio_Setup.exe
